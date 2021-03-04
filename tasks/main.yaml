@@ -1,0 +1,65 @@
+---
+- name: "Create Helm CLI Temp Dir at {{ helm_tmp_dir }}"
+  file:
+    path: "{{ helm_tmp_dir }}"
+    state: directory
+
+- name: "Create Helm CLI Extract Temp Dir at {{ helm_tmp_extract_dir }}"
+  file:
+    path: "{{ helm_tmp_extract_dir }}"
+    state: directory
+
+- name: Get Latest Helm CLI Release Version Meta Data
+  uri:
+    url: https://api.github.com/repos/helm/helm/releases/latest
+    method: GET
+    return_content: yes
+    status_code: 200
+    body_format: json
+  register: version_result
+
+- name: Download Latest Helm CLI tarball
+  get_url:
+    url:  https://get.helm.sh/helm-{{ version_result.json.tag_name }}-linux-amd64.tar.gz
+    dest: "{{ helm_tmp_dir }}"
+    mode: '0444'
+
+# Since helm cli archive includes other files we don't need  
+# and there is no way of just extracting helm without knowing every file you want to exclude
+# this is going to use a temp dir and cherry pick just helm binary
+- name: Extract helm cli tarball to temp dir
+  unarchive:
+    src: "{{ helm_tmp_dir }}/helm-{{ version_result.json.tag_name }}-linux-amd64.tar.gz"
+    dest: "{{ helm_tmp_extract_dir }}"
+
+- name: Ensure helm Binary is in /usr/local/bin
+  copy:
+    src: "{{ helm_tmp_extract_dir }}/linux-amd64/helm"
+    dest: /usr/local/bin/helm
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Ensure helm Temp Dir is Removed
+  file:
+    path: "{{ helm_tmp_dir }}"
+    state: absent
+
+- name: 'Ensure the Bash Completion Package is Installed via ({{ ansible_pkg_mgr }})'
+  include_tasks: 'pkg-install-{{ ansible_pkg_mgr }}.yaml'
+  when: ansible_pkg_mgr in ('apt', 'yum', 'dnf')
+
+- fail:
+    msg: WARNING This role is not setup to deal with package manager {{ ansible_pkg_mgr }} can not verify bash-completion Package is installed, bash completions may not work
+  ignore_errors: yes
+  when: ansible_pkg_mgr not in ('apt', 'yum', 'dnf')
+
+- name: Setup bash Completion for helm
+  shell: helm completion bash > /etc/bash_completion.d/helm_completion
+
+- name: Ensure bash Completion Script Has Proper File Permissions
+  file:
+    path: /etc/bash_completion.d/helm_completion
+    owner: root
+    group: root
+    mode: '0644'
